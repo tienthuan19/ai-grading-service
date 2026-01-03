@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Google Gemini (Bắt buộc phải khớp với .env)
     GOOGLE_API_KEY: str
-    GEMINI_MODEL: str = "models/gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-1.5-flash"
 
     # Queues (Bắt buộc phải khớp với .env)
     AI_SUBMISSION_QUEUE: str = "ai_submission_queue"

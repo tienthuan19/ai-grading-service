@@ -1,15 +1,14 @@
-import google.generativeai as genai
 import json
 import logging
-import time # <--- [MỚI] Thêm thư viện time để dùng hàm sleep
+import time
+from google import genai  # <--- NEW IMPORT
 from app.core.config import settings
 from app.models.schemas import GradingRequest, GradingResult
 
 logger = logging.getLogger(__name__)
 
-# Setup Google Gemini
-genai.configure(api_key=settings.GOOGLE_API_KEY)
-model = genai.GenerativeModel(settings.GEMINI_MODEL)
+# Initialize Client (No more global genai.configure)
+client = genai.Client(api_key=settings.GOOGLE_API_KEY) #
 
 class GraderService:
     @staticmethod
@@ -17,12 +16,13 @@ class GraderService:
         total_score = 0.0
         feedback_parts = []
 
+        # Remove "models/" prefix if present, as the new SDK prefers the clean ID
+        model_id = settings.GEMINI_MODEL
+
         try:
-            # Duyệt qua từng câu trả lời trong bài nộp
             for index, answer in enumerate(request.essay_answers, 1):
                 logger.info(f"Đang chấm câu hỏi {index}/{len(request.essay_answers)} của bài {request.submission_id}")
 
-                # Prompt chấm điểm cho TỪNG CÂU
                 prompt = f"""
                 Bạn là giáo viên chấm thi. Hãy chấm điểm câu hỏi sau đây:
                 - Câu hỏi: {answer.question_text}
@@ -36,22 +36,24 @@ class GraderService:
                 """
 
                 try:
-                    response = model.generate_content(prompt)
+                    # NEW SDK CALL
+                    response = client.models.generate_content(
+                        model=model_id,
+                        contents=prompt
+                    )
+
                     raw_text = response.text.strip()
-                    # Lọc bỏ markdown nếu có
                     if raw_text.startswith("```"):
                         raw_text = raw_text.replace("```json", "").replace("```", "").strip()
 
                     data = json.loads(raw_text)
 
-                    # Lấy điểm và validate
                     q_score = float(data.get("score", 0))
                     if q_score > answer.weight: q_score = answer.weight
                     if q_score < 0: q_score = 0
 
                     q_feedback = data.get("feedback", "")
 
-                    # Cộng dồn
                     total_score += q_score
                     feedback_parts.append(f"Câu {index}: {q_feedback} ({q_score}/{answer.weight}đ)")
 
@@ -59,10 +61,9 @@ class GraderService:
                     logger.error(f"Lỗi chấm câu {answer.question_id}: {e}")
                     feedback_parts.append(f"Câu {index}: Lỗi chấm điểm AI ({e})")
 
-                # [QUAN TRỌNG] Nghỉ 2 giây trước khi chấm câu tiếp theo để tránh lỗi 429 Spam
-                time.sleep(2)
+                # Sleep to respect rate limits (15 Requests Per Minute on Free Tier)
+                time.sleep(4)
 
-                # Tổng hợp kết quả
             final_feedback = "\n".join(feedback_parts)
 
             return GradingResult(

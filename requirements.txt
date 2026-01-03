@@ -1,5 +1,5 @@
 pydantic==2.6.1
 pydantic-settings==2.2.1
-google-generativeai==0.3.2
+google-genai
 pika==1.3.2
 python-dotenv==1.0.1
