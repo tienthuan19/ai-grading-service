@@ -1,14 +1,15 @@
 import json
 import logging
 import time
-from google import genai  # <--- NEW IMPORT
+from google import genai
+from google.genai import types
 from app.core.config import settings
 from app.models.schemas import GradingRequest, GradingResult
 
 logger = logging.getLogger(__name__)
 
-# Initialize Client (No more global genai.configure)
-client = genai.Client(api_key=settings.GOOGLE_API_KEY) #
+# Khởi tạo Client
+client = genai.Client(api_key=settings.GOOGLE_API_KEY)
 
 class GraderService:
     @staticmethod
@@ -16,8 +17,11 @@ class GraderService:
         total_score = 0.0
         feedback_parts = []
 
-        # Remove "models/" prefix if present, as the new SDK prefers the clean ID
-        model_id = settings.GEMINI_MODEL
+        # --- [FIX LỖI 404] ---
+        # Sử dụng phiên bản cụ thể "gemini-1.5-flash-001" thay vì alias
+        # Hoặc bạn có thể thử "gemini-2.0-flash" nếu muốn dùng bản mới nhất
+        model_id = "gemini-1.5-flash-001"
+        # ---------------------
 
         try:
             for index, answer in enumerate(request.essay_answers, 1):
@@ -36,19 +40,24 @@ class GraderService:
                 """
 
                 try:
-                    # NEW SDK CALL
+                    # Gọi API với cấu hình JSON response
                     response = client.models.generate_content(
                         model=model_id,
-                        contents=prompt
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json"
+                        )
                     )
 
                     raw_text = response.text.strip()
+                    # Xử lý trường hợp AI vẫn trả về markdown dù đã config JSON
                     if raw_text.startswith("```"):
                         raw_text = raw_text.replace("```json", "").replace("```", "").strip()
 
                     data = json.loads(raw_text)
 
                     q_score = float(data.get("score", 0))
+                    # Validate điểm số
                     if q_score > answer.weight: q_score = answer.weight
                     if q_score < 0: q_score = 0
 
@@ -61,7 +70,7 @@ class GraderService:
                     logger.error(f"Lỗi chấm câu {answer.question_id}: {e}")
                     feedback_parts.append(f"Câu {index}: Lỗi chấm điểm AI ({e})")
 
-                # Sleep to respect rate limits (15 Requests Per Minute on Free Tier)
+                # Nghỉ 4s để tránh Rate Limit (429)
                 time.sleep(4)
 
             final_feedback = "\n".join(feedback_parts)
