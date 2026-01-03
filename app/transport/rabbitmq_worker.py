@@ -56,10 +56,13 @@ class RabbitMQWorker:
             ch.basic_publish(
                 exchange='',
                 routing_key=settings.AI_RESULT_QUEUE,
-                body=json.dumps(result.model_dump(), ensure_ascii=False),
+
+                # 👇 SỬA DÒNG NÀY: Thêm by_alias=True
+                body=json.dumps(result.model_dump(by_alias=True), ensure_ascii=False),
+
                 properties=pika.BasicProperties(
-                    delivery_mode=2,  # Tin nhắn bền vững
-                    content_type='application/json'  # <--- THÊM DÒNG NÀY ĐỂ JAVA KHÔNG BỊ LỖI
+                    delivery_mode=2,
+                    content_type='application/json'
                 )
             )
             logger.info(f"📤 Đã trả điểm ID: {result.submission_id}")

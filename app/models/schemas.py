@@ -30,8 +30,8 @@ class GradingRequest(BaseModel):
 class GradingResult(BaseModel):
     submission_id: str
 
-    # Tổng điểm luôn là float
-    score: float
+    # 👇 SỬA DÒNG NÀY: Thêm alias để map sang tên biến bên Java
+    score: float = Field(serialization_alias="scoreAi")
 
     feedback: str
     error: Optional[str] = None
