@@ -1,6 +1,7 @@
 import google.generativeai as genai
 import json
 import logging
+import time # <--- [MỚI] Thêm thư viện time để dùng hàm sleep
 from app.core.config import settings
 from app.models.schemas import GradingRequest, GradingResult
 
@@ -8,53 +9,73 @@ logger = logging.getLogger(__name__)
 
 # Setup Google Gemini
 genai.configure(api_key=settings.GOOGLE_API_KEY)
-model = genai.GenerativeModel('gemini-pro')
+model = genai.GenerativeModel(settings.GEMINI_MODEL)
 
 class GraderService:
     @staticmethod
     def grade_submission(request: GradingRequest) -> GradingResult:
+        total_score = 0.0
+        feedback_parts = []
+
         try:
-            # Prompt kỹ thuật (System Prompt)
-            prompt = f"""
-            Vai trò: Bạn là giáo viên chấm thi công tâm.
-            Nhiệm vụ: Chấm điểm bài làm dựa trên thông tin sau:
-            - Câu hỏi: {request.question_content}
-            - Đáp án mẫu: {request.model_answer if request.model_answer else "Không có, tự đánh giá theo kiến thức chuẩn."}
-            - Bài làm học sinh: {request.student_answer}
-            - Thang điểm tối đa: {request.max_score}
+            # Duyệt qua từng câu trả lời trong bài nộp
+            for index, answer in enumerate(request.essay_answers, 1):
+                logger.info(f"Đang chấm câu hỏi {index}/{len(request.essay_answers)} của bài {request.submission_id}")
 
-            Yêu cầu bắt buộc:
-            1. Output duy nhất là một JSON object hợp lệ. Không thêm markdown ```json.
-            2. Format: {{"score": <số thực>, "feedback": "<nhận xét ngắn gọn>"}}
-            3. Điểm số không được vượt quá {request.max_score}.
-            """
+                # Prompt chấm điểm cho TỪNG CÂU
+                prompt = f"""
+                Bạn là giáo viên chấm thi. Hãy chấm điểm câu hỏi sau đây:
+                - Câu hỏi: {answer.question_text}
+                - Đáp án mẫu: {answer.model_answer if answer.model_answer else "Không có, tự đánh giá theo kiến thức chuẩn."}
+                - Bài làm học sinh: {answer.student_answer}
+                - Điểm tối đa của câu này: {answer.weight}
 
-            response = model.generate_content(prompt)
+                Yêu cầu Output:
+                Trả về duy nhất 1 JSON object (không markdown):
+                {{"score": <số thực, tối đa {answer.weight}>, "feedback": "<nhận xét ngắn gọn>"}}
+                """
 
-            # Xử lý text trả về (Cleaning)
-            raw_text = response.text.strip()
-            # Đôi khi AI vẫn thêm markdown, ta lọc bỏ
-            if raw_text.startswith("```"):
-                raw_text = raw_text.replace("```json", "").replace("```", "").strip()
+                try:
+                    response = model.generate_content(prompt)
+                    raw_text = response.text.strip()
+                    # Lọc bỏ markdown nếu có
+                    if raw_text.startswith("```"):
+                        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
 
-            data = json.loads(raw_text)
+                    data = json.loads(raw_text)
 
-            # Validate điểm số
-            score = float(data.get("score", 0))
-            if score > request.max_score: score = request.max_score
-            if score < 0: score = 0
+                    # Lấy điểm và validate
+                    q_score = float(data.get("score", 0))
+                    if q_score > answer.weight: q_score = answer.weight
+                    if q_score < 0: q_score = 0
+
+                    q_feedback = data.get("feedback", "")
+
+                    # Cộng dồn
+                    total_score += q_score
+                    feedback_parts.append(f"Câu {index}: {q_feedback} ({q_score}/{answer.weight}đ)")
+
+                except Exception as e:
+                    logger.error(f"Lỗi chấm câu {answer.question_id}: {e}")
+                    feedback_parts.append(f"Câu {index}: Lỗi chấm điểm AI ({e})")
+
+                # [QUAN TRỌNG] Nghỉ 2 giây trước khi chấm câu tiếp theo để tránh lỗi 429 Spam
+                time.sleep(2)
+
+                # Tổng hợp kết quả
+            final_feedback = "\n".join(feedback_parts)
 
             return GradingResult(
                 submission_id=request.submission_id,
-                score=score,
-                feedback=data.get("feedback", "Đã chấm xong.")
+                score=total_score,
+                feedback=final_feedback
             )
 
         except Exception as e:
-            logger.error(f"Lỗi chấm bài {request.submission_id}: {str(e)}")
+            logger.error(f"Lỗi hệ thống chấm bài {request.submission_id}: {str(e)}")
             return GradingResult(
                 submission_id=request.submission_id,
                 score=0,
-                feedback="Lỗi hệ thống chấm điểm AI.",
+                feedback="Lỗi hệ thống nghiêm trọng khi xử lý bài nộp.",
                 error=str(e)
             )

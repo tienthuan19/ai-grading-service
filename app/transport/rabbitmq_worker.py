@@ -27,11 +27,12 @@ class RabbitMQWorker:
                 self.connection = pika.BlockingConnection(params)
                 self.channel = self.connection.channel()
 
+                # --- SỬA TÊN BIẾN Ở ĐÂY CHO KHỚP VỚI CONFIG.PY ---
                 # Khai báo queue (đảm bảo nó tồn tại)
-                self.channel.queue_declare(queue=settings.QUEUE_REQUEST, durable=True)
-                self.channel.queue_declare(queue=settings.QUEUE_RESULT, durable=True)
+                self.channel.queue_declare(queue=settings.AI_SUBMISSION_QUEUE, durable=True)
+                self.channel.queue_declare(queue=settings.AI_RESULT_QUEUE, durable=True)
 
-                logger.info(f"✅ Đã kết nối RabbitMQ! Đang lắng nghe tại: {settings.QUEUE_REQUEST}")
+                logger.info(f"✅ Đã kết nối RabbitMQ! Đang lắng nghe tại: {settings.AI_SUBMISSION_QUEUE}")
                 return
             except pika.exceptions.AMQPConnectionError:
                 logger.warning("⚠️ Chưa thấy RabbitMQ, thử lại sau 5s...")
@@ -44,17 +45,22 @@ class RabbitMQWorker:
             logger.info(f"📩 Nhận bài ID: {payload.get('submission_id')}")
 
             # 1. Parse dữ liệu
+            # Lưu ý: Đảm bảo GradingRequest trong schemas.py khớp với JSON Java gửi sang
             request = GradingRequest(**payload)
 
             # 2. Gọi AI chấm
             result = GraderService.grade_submission(request)
 
             # 3. Gửi kết quả về
+            # --- SỬA TÊN BIẾN Ở ĐÂY ---
             ch.basic_publish(
                 exchange='',
-                routing_key=settings.QUEUE_RESULT,
+                routing_key=settings.AI_RESULT_QUEUE,
                 body=json.dumps(result.model_dump(), ensure_ascii=False),
-                properties=pika.BasicProperties(delivery_mode=2) # Tin nhắn bền vững
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # Tin nhắn bền vững
+                    content_type='application/json'  # <--- THÊM DÒNG NÀY ĐỂ JAVA KHÔNG BỊ LỖI
+                )
             )
             logger.info(f"📤 Đã trả điểm ID: {result.submission_id}")
 
@@ -67,7 +73,10 @@ class RabbitMQWorker:
     def start(self):
         self.connect()
         self.channel.basic_qos(prefetch_count=1) # Chỉ nhận 1 bài mỗi lần
-        self.channel.basic_consume(queue=settings.QUEUE_REQUEST, on_message_callback=self.on_request)
+
+        # --- SỬA TÊN BIẾN Ở ĐÂY ---
+        self.channel.basic_consume(queue=settings.AI_SUBMISSION_QUEUE, on_message_callback=self.on_request)
+
         try:
             self.channel.start_consuming()
         except KeyboardInterrupt:
