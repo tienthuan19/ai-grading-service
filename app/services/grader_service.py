@@ -5,7 +5,8 @@ import random
 from google.genai import Client, types, errors
 
 from app.core.config import settings
-from app.models.schemas import GradingRequest, GradingResult
+# 👇 Nhớ import GradingDetail
+from app.models.schemas import GradingRequest, GradingResult, GradingDetail
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,6 @@ class GraderService:
         """
 
         # 1. Chuẩn bị nội dung Prompt
-        # Chúng ta sẽ xây dựng một chuỗi văn bản chứa toàn bộ đề bài và bài làm
         questions_content = ""
         for idx, answer in enumerate(request.essay_answers, start=1):
             questions_content += f"""
@@ -52,7 +52,7 @@ Không dùng markdown block (```json). Cấu trúc như sau:
     "score": <số điểm chấm được (float)>,
     "feedback": "<nhận xét ngắn gọn, súc tích>"
   }},
-  ... (tiếp tục cho các câu còn lại)
+  ...
 ]
 
 Lưu ý: 
@@ -60,7 +60,7 @@ Lưu ý:
 - Nếu học sinh không làm bài hoặc làm sai hoàn toàn, điểm là 0.
 """
 
-        # 2. Gọi AI (Sử dụng cơ chế Retry để chống crash)
+        # 2. Gọi AI (Sử dụng cơ chế Retry)
         model_id = settings.GEMINI_MODEL
         response_text = ""
 
@@ -71,16 +71,16 @@ Lưu ý:
                     model=model_id,
                     contents=final_prompt,
                     config=types.GenerateContentConfig(
-                        response_mime_type="application/json" # Bắt buộc AI trả về JSON
+                        response_mime_type="application/json"
                     ),
                 )
                 response_text = response.text.strip()
-                break # Thành công thì thoát vòng lặp
+                break
 
             except errors.ClientError as e:
-                if e.code == 429: # Lỗi Rate Limit
+                if e.code == 429:
                     wait_time = (10 * (attempt + 1)) + random.uniform(1, 5)
-                    logger.warning(f"⚠️ Quá tải (429). Chờ {wait_time:.1f}s thử lại ({attempt+1}/{max_retries})...")
+                    logger.warning(f"⚠️ Quá tải (429). Chờ {wait_time:.1f}s...")
                     time.sleep(wait_time)
                 else:
                     logger.error(f"❌ Lỗi API khác: {e}")
@@ -93,62 +93,58 @@ Lưu ý:
             return GradingResult(
                 submission_id=request.submission_id,
                 score=0.0,
-                feedback="Lỗi: Không thể kết nối đến AI sau nhiều lần thử.",
-                error="AI Response Empty"
+                feedback="Lỗi: Không thể kết nối đến AI.",
+                details=[]
             )
 
-        # 3. Xử lý kết quả trả về (Parsing JSON)
+        # 3. Xử lý kết quả trả về
         total_score = 0.0
         feedback_lines = []
+        details_list = [] # 👇 Danh sách chi tiết để gửi về Java
 
         try:
-            # Clean markdown nếu có
             if response_text.startswith("```"):
                 response_text = response_text.replace("```json", "").replace("```", "").strip()
 
-            # Parse JSON Array
             grading_data = json.loads(response_text)
-
-            # Duyệt qua từng kết quả để tính tổng
-            # Tạo map để dễ tra cứu theo ID (phòng trường hợp AI trả về lộn xộn)
             result_map = {item.get("question_id"): item for item in grading_data}
 
             for idx, answer in enumerate(request.essay_answers, start=1):
                 res = result_map.get(answer.question_id, {})
 
-                # Lấy điểm (mặc định 0 nếu lỗi)
+                # Lấy điểm và feedback
                 s = float(res.get("score", 0.0))
-                # Kẹp điểm trong khoảng [0, max_weight]
-                s = max(0.0, min(s, float(answer.weight)))
-
+                s = max(0.0, min(s, float(answer.weight))) # Kẹp điểm
                 f = res.get("feedback", "Không có nhận xét")
 
+                # Cộng tổng
                 total_score += s
                 feedback_lines.append(f"Câu {idx}: {f} ({s}/{answer.weight}đ)")
 
-        except json.JSONDecodeError:
-            logger.error(f"❌ AI trả về JSON lỗi: {response_text}")
-            return GradingResult(
-                submission_id=request.submission_id,
-                score=0.0,
-                feedback="Lỗi hệ thống: AI trả về định dạng không hợp lệ.",
-                error="JSON Decode Error"
-            )
+                # 👇 THÊM VÀO DANH SÁCH CHI TIẾT
+                details_list.append(GradingDetail(
+                    question_id=answer.question_id,
+                    score=s,
+                    feedback=f
+                ))
+
         except Exception as e:
-            logger.exception("Lỗi khi xử lý kết quả chấm thi")
+            logger.exception("Lỗi khi xử lý JSON từ AI")
             return GradingResult(
                 submission_id=request.submission_id,
                 score=0.0,
                 feedback="Lỗi xử lý nội bộ.",
-                error=str(e)
+                error=str(e),
+                details=[]
             )
 
         # 4. Trả kết quả cuối cùng
         final_feedback = "\n".join(feedback_lines)
-        logger.info(f"✅ Đã chấm xong bài {request.submission_id}. Tổng điểm: {total_score}")
+        logger.info(f"✅ Đã chấm xong bài {request.submission_id}. Tổng: {total_score}")
 
         return GradingResult(
             submission_id=request.submission_id,
             score=round(total_score, 2),
-            feedback=final_feedback
+            feedback=final_feedback,
+            details=details_list # 👈 Quan trọng: Gửi kèm danh sách chi tiết
         )

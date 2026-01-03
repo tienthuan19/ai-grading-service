@@ -25,13 +25,29 @@ class GradingRequest(BaseModel):
 
     submitted_at: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
+class GradingDetail(BaseModel):
+    # 👇 CHO PHÉP DÙNG TÊN BIẾN PYTHON (question_id) ĐỂ TẠO OBJECT
+    model_config = ConfigDict(populate_by_name=True)
 
+    # Dùng alias="questionId" để định danh tên field cho cả input lẫn output
+    questionId: str = Field(alias="questionId")
+    score: float
+    feedback: str
 
 class GradingResult(BaseModel):
-    submission_id: str
+    # 👇 QUAN TRỌNG: Cấu hình này giúp fix lỗi "Field required"
+    model_config = ConfigDict(populate_by_name=True)
 
-    # 👇 SỬA DÒNG NÀY: Thêm alias để map sang tên biến bên Java
-    score: float = Field(serialization_alias="scoreAi")
+    submissionId: str = Field(alias="submissionId")
+
+    # scoreAi là tên field Java mong đợi
+    score: float = Field(alias="scoreAi")
 
     feedback: str
+
+    details: List[GradingDetail] = Field(default_factory=list)
+
     error: Optional[str] = None
+
+
+

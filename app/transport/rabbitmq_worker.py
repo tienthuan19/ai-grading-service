@@ -57,12 +57,13 @@ class RabbitMQWorker:
                 exchange='',
                 routing_key=settings.AI_RESULT_QUEUE,
 
-                # 👇 SỬA DÒNG NÀY: Thêm by_alias=True
+                # Đảm bảo by_alias=True để field 'score' thành 'scoreAi' trong JSON
                 body=json.dumps(result.model_dump(by_alias=True), ensure_ascii=False),
 
                 properties=pika.BasicProperties(
                     delivery_mode=2,
-                    content_type='application/json'
+                    content_type='application/json',
+                    priority=0  # <--- THÊM DÒNG NÀY để fix lỗi NullPointerException bên Java
                 )
             )
             logger.info(f"📤 Đã trả điểm ID: {result.submission_id}")
