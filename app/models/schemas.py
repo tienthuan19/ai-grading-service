@@ -21,24 +21,14 @@ class GradingRequest(BaseModel):
 
 class GradingDetail(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-
-    # SỬA: Đổi tên biến Python thành snake_case (question_id)
-    # Alias giữ nguyên là "questionId" để mapping với JSON bên ngoài
     question_id: str = Field(alias="questionId")
     score: float
     feedback: str
 
 class GradingResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-
-    # SỬA: Đổi tên biến Python thành snake_case (submission_id)
     submission_id: str = Field(alias="submissionId")
-
-    # scoreAi là tên field Java mong đợi
     score: float = Field(alias="scoreAi")
-
     feedback: str
-
     details: List[GradingDetail] = Field(default_factory=list)
-
     error: Optional[str] = None

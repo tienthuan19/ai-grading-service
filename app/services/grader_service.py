@@ -2,25 +2,17 @@ import json
 import logging
 import time
 import random
-from google.genai import Client, types, errors
 
+from google.genai import Client, types, errors
 from app.core.config import settings
-# 👇 Nhớ import GradingDetail
 from app.models.schemas import GradingRequest, GradingResult, GradingDetail
 
 logger = logging.getLogger(__name__)
-
-# Khởi tạo Client
 client = Client(api_key=settings.GOOGLE_API_KEY)
 
 class GraderService:
     @staticmethod
     def grade_submission(request: GradingRequest) -> GradingResult:
-        """
-        Chiến thuật: GOM TẤT CẢ CÂU HỎI VÀO 1 PROMPT (BATCH PROCESSING)
-        """
-
-        # 1. Chuẩn bị nội dung Prompt
         questions_content = ""
         for idx, answer in enumerate(request.essay_answers, start=1):
             questions_content += f"""
@@ -32,7 +24,6 @@ Câu hỏi {idx} (ID: {answer.question_id}):
 - Điểm tối đa: {answer.weight}
 """
 
-        # Prompt tổng hợp
         final_prompt = f"""
 Bạn là một giáo viên chấm thi công tâm và chính xác.
 Dưới đây là danh sách các câu hỏi và bài làm của một học sinh. 
@@ -60,7 +51,6 @@ Lưu ý:
 - Nếu học sinh không làm bài hoặc làm sai hoàn toàn, điểm là 0.
 """
 
-        # 2. Gọi AI (Sử dụng cơ chế Retry)
         model_id = settings.GEMINI_MODEL
         response_text = ""
 
@@ -100,7 +90,7 @@ Lưu ý:
         # 3. Xử lý kết quả trả về
         total_score = 0.0
         feedback_lines = []
-        details_list = [] # 👇 Danh sách chi tiết để gửi về Java
+        details_list = []
 
         try:
             if response_text.startswith("```"):
@@ -112,16 +102,13 @@ Lưu ý:
             for idx, answer in enumerate(request.essay_answers, start=1):
                 res = result_map.get(answer.question_id, {})
 
-                # Lấy điểm và feedback
                 s = float(res.get("score", 0.0))
                 s = max(0.0, min(s, float(answer.weight))) # Kẹp điểm
                 f = res.get("feedback", "Không có nhận xét")
 
-                # Cộng tổng
                 total_score += s
                 feedback_lines.append(f"Câu {idx}: {f} ({s}/{answer.weight}đ)")
 
-                # 👇 THÊM VÀO DANH SÁCH CHI TIẾT
                 details_list.append(GradingDetail(
                     question_id=answer.question_id,
                     score=s,
@@ -138,7 +125,6 @@ Lưu ý:
                 details=[]
             )
 
-        # 4. Trả kết quả cuối cùng
         final_feedback = "\n".join(feedback_lines)
         logger.info(f"✅ Đã chấm xong bài {request.submission_id}. Tổng: {total_score}")
 
@@ -146,5 +132,5 @@ Lưu ý:
             submission_id=request.submission_id,
             score=round(total_score, 2),
             feedback=final_feedback,
-            details=details_list # 👈 Quan trọng: Gửi kèm danh sách chi tiết
+            details=details_list
         )

@@ -1,7 +1,6 @@
 import logging
 from app.transport.rabbitmq_worker import RabbitMQWorker
 
-# Cấu hình log ra màn hình
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -9,6 +8,6 @@ logging.basicConfig(
 )
 
 if __name__ == "__main__":
-    print("🚀 AI Grading Service đang khởi động...")
+    print(">>>>>>>>>>RUNNING<<<<<<<<<<")
     worker = RabbitMQWorker()
     worker.start()
